@@ -14,16 +14,299 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      buyers: {
+        Row: {
+          avatar_url: string | null
+          buys: string[]
+          company_name: string
+          county: string
+          created_at: string
+          id: string
+          location: string
+          price_max: number
+          price_min: number
+          producer_type: string
+          rating: number
+          reviews: number
+          verified: boolean
+        }
+        Insert: {
+          avatar_url?: string | null
+          buys?: string[]
+          company_name: string
+          county?: string
+          created_at?: string
+          id?: string
+          location?: string
+          price_max?: number
+          price_min?: number
+          producer_type: string
+          rating?: number
+          reviews?: number
+          verified?: boolean
+        }
+        Update: {
+          avatar_url?: string | null
+          buys?: string[]
+          company_name?: string
+          county?: string
+          created_at?: string
+          id?: string
+          location?: string
+          price_max?: number
+          price_min?: number
+          producer_type?: string
+          rating?: number
+          reviews?: number
+          verified?: boolean
+        }
+        Relationships: []
+      }
+      impact_stats: {
+        Row: {
+          breakdown: Json
+          co2_avoided_tons: number
+          farmers_benefited: number
+          id: number
+          jobs_created: number
+          total_recovered_tons: number
+          trees_equivalent: number
+          updated_at: string
+        }
+        Insert: {
+          breakdown?: Json
+          co2_avoided_tons?: number
+          farmers_benefited?: number
+          id?: number
+          jobs_created?: number
+          total_recovered_tons?: number
+          trees_equivalent?: number
+          updated_at?: string
+        }
+        Update: {
+          breakdown?: Json
+          co2_avoided_tons?: number
+          farmers_benefited?: number
+          id?: number
+          jobs_created?: number
+          total_recovered_tons?: number
+          trees_equivalent?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      listings: {
+        Row: {
+          county: string
+          created_at: string
+          farmer_id: string
+          id: string
+          image_url: string | null
+          location: string
+          price_per_ton: number
+          quantity_tons: number
+          status: string
+          waste_type: string
+        }
+        Insert: {
+          county?: string
+          created_at?: string
+          farmer_id: string
+          id?: string
+          image_url?: string | null
+          location?: string
+          price_per_ton?: number
+          quantity_tons?: number
+          status?: string
+          waste_type: string
+        }
+        Update: {
+          county?: string
+          created_at?: string
+          farmer_id?: string
+          id?: string
+          image_url?: string | null
+          location?: string
+          price_per_ton?: number
+          quantity_tons?: number
+          status?: string
+          waste_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "listings_farmer_id_fkey"
+            columns: ["farmer_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          read: boolean
+          sender: string
+          subject: string
+          user_id: string
+        }
+        Insert: {
+          body?: string
+          created_at?: string
+          id?: string
+          read?: boolean
+          sender?: string
+          subject?: string
+          user_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          read?: boolean
+          sender?: string
+          subject?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          county: string
+          created_at: string
+          full_name: string
+          id: string
+          phone: string
+          verified: boolean
+        }
+        Insert: {
+          avatar_url?: string | null
+          county?: string
+          created_at?: string
+          full_name?: string
+          id: string
+          phone?: string
+          verified?: boolean
+        }
+        Update: {
+          avatar_url?: string | null
+          county?: string
+          created_at?: string
+          full_name?: string
+          id?: string
+          phone?: string
+          verified?: boolean
+        }
+        Relationships: []
+      }
+      transactions: {
+        Row: {
+          amount: number
+          buyer_id: string | null
+          counterparty: string
+          created_at: string
+          farmer_id: string
+          id: string
+          listing_id: string | null
+          paid_at: string | null
+          status: string
+          tons: number
+          waste_type: string
+        }
+        Insert: {
+          amount?: number
+          buyer_id?: string | null
+          counterparty?: string
+          created_at?: string
+          farmer_id: string
+          id?: string
+          listing_id?: string | null
+          paid_at?: string | null
+          status?: string
+          tons?: number
+          waste_type: string
+        }
+        Update: {
+          amount?: number
+          buyer_id?: string | null
+          counterparty?: string
+          created_at?: string
+          farmer_id?: string
+          id?: string
+          listing_id?: string | null
+          paid_at?: string | null
+          status?: string
+          tons?: number
+          waste_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transactions_buyer_id_fkey"
+            columns: ["buyer_id"]
+            isOneToOne: false
+            referencedRelation: "buyers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_farmer_id_fkey"
+            columns: ["farmer_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_listing_id_fkey"
+            columns: ["listing_id"]
+            isOneToOne: false
+            referencedRelation: "listings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "farmer" | "buyer" | "admin"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +433,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["farmer", "buyer", "admin"],
+    },
   },
 } as const
