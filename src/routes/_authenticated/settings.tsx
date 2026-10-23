@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -12,10 +12,14 @@ import {
   LogOut,
   BadgeCheck,
   ChevronRight,
+  Lock,
 } from "lucide-react";
 import { getDashboard, updateProfile } from "@/lib/marketplace.functions";
 import { signOut } from "@/lib/auth";
 import { roleLabel } from "@/lib/types";
+import { updateSenderNameInMessages } from "@/lib/messages-store";
+import { saveStoredFarmerAccount } from "@/lib/farmer-accounts";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +55,12 @@ function SettingsPage() {
   const [language, setLanguage] = useState("English");
   const [pushOn, setPushOn] = useState(true);
   const [smsOn, setSmsOn] = useState(true);
+  // Change PIN dialog
+  const [pinOpen, setPinOpen] = useState(false);
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
 
   if (isLoading || !data) {
     return <p className="py-20 text-center text-sm text-muted-foreground">Loading profile...</p>;
@@ -65,12 +75,57 @@ function SettingsPage() {
 
   async function save() {
     try {
+      const oldName = data!.profile.full_name;
       await saveProfile({ data: { full_name: name, phone, county } });
+      // Retroactively rename sender in all previous local messages
+      if (name && name !== oldName) {
+        updateSenderNameInMessages(oldName, name, phone);
+      }
+      if (data?.role === "farmer" || !data?.role) {
+        saveStoredFarmerAccount({ id: data?.profile.id, full_name: name, phone, county });
+      }
       toast.success("Profile updated");
       setEditOpen(false);
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["all-listings"] });
+      queryClient.invalidateQueries({ queryKey: ["messages"] });
     } catch (err) {
       toast.error("Could not save", { description: String(err) });
+    }
+  }
+
+  async function handleChangePin() {
+    if (!currentPin || !newPin || !confirmPin) {
+      toast.error("Fill in all PIN fields");
+      return;
+    }
+    if (newPin.length < 4) {
+      toast.error("New PIN must be at least 4 digits");
+      return;
+    }
+    if (newPin !== confirmPin) {
+      toast.error("New PINs do not match");
+      return;
+    }
+    setPinBusy(true);
+    try {
+      // Re-authenticate with current PIN first
+      const email = `${data!.profile.phone.replace(/[^0-9]/g, "")}@takathamani.app`;
+      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: currentPin });
+      if (signInErr) {
+        toast.error("Current PIN is incorrect");
+        setPinBusy(false);
+        return;
+      }
+      const { error: updateErr } = await supabase.auth.updateUser({ password: newPin });
+      if (updateErr) throw updateErr;
+      toast.success("PIN changed successfully!", { description: "Use your new PIN next time you log in." });
+      setPinOpen(false);
+      setCurrentPin(""); setNewPin(""); setConfirmPin("");
+    } catch (err) {
+      toast.error("Could not change PIN", { description: String(err) });
+    } finally {
+      setPinBusy(false);
     }
   }
 
@@ -105,6 +160,7 @@ function SettingsPage() {
 
       <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
         <MenuRow Icon={UserPen} label="Edit Profile" onClick={openEdit} />
+        <MenuRow Icon={Lock} label="Change PIN" onClick={() => { setCurrentPin(""); setNewPin(""); setConfirmPin(""); setPinOpen(true); }} />
         <MenuRow
           Icon={Landmark}
           label="Bank & Mobile Money"
@@ -171,7 +227,7 @@ function SettingsPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit Profile</DialogTitle>
-            <DialogDescription>Update your account details.</DialogDescription>
+            <DialogDescription>Update your account details. Your name will be updated on all previous messages too.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <input
@@ -200,6 +256,52 @@ function SettingsPage() {
               className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90"
             >
               Save Changes
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Change PIN Dialog */}
+      <Dialog open={pinOpen} onOpenChange={setPinOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Lock className="h-4 w-4 text-primary" /> Change PIN</DialogTitle>
+            <DialogDescription>Enter your current PIN and set a new one (minimum 4 digits).</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <input
+              value={currentPin}
+              onChange={(e) => setCurrentPin(e.target.value)}
+              type="password"
+              inputMode="numeric"
+              placeholder="Current PIN"
+              aria-label="Current PIN"
+              className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+            <input
+              value={newPin}
+              onChange={(e) => setNewPin(e.target.value)}
+              type="password"
+              inputMode="numeric"
+              placeholder="New PIN (min 4 digits)"
+              aria-label="New PIN"
+              className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+            <input
+              value={confirmPin}
+              onChange={(e) => setConfirmPin(e.target.value)}
+              type="password"
+              inputMode="numeric"
+              placeholder="Confirm new PIN"
+              aria-label="Confirm new PIN"
+              className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+            <button
+              onClick={handleChangePin}
+              disabled={pinBusy}
+              className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            >
+              {pinBusy ? "Updating PIN..." : "Update PIN"}
             </button>
           </div>
         </DialogContent>

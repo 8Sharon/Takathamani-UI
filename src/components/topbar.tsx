@@ -1,12 +1,12 @@
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Search, UserRound } from "lucide-react";
+import { Search, UserRound, Mail } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { getDashboard } from "@/lib/marketplace.functions";
 import { roleLabel } from "@/lib/types";
 
-export function Topbar() {
+export function Topbar({ unread = 0 }: { unread?: number }) {
   const getDash = useServerFn(getDashboard);
   const { data } = useQuery({ queryKey: ["dashboard"], queryFn: () => getDash() });
   const profile = data?.profile;
@@ -23,7 +23,22 @@ export function Topbar() {
           className="w-full rounded-full border border-input bg-background py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-2.5">
+        {/* Messages quick icon with pulsing red badge */}
+        <Link
+          to="/messages"
+          aria-label="Messages"
+          className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-foreground hover:bg-secondary transition-colors"
+          title="Messages"
+        >
+          <Mail className="h-4.5 w-4.5" />
+          {unread > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white shadow-xs animate-pulse">
+              {unread}
+            </span>
+          )}
+        </Link>
+
         <Link to="/settings" className="hidden items-center gap-2.5 sm:flex">
           <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-secondary text-xs font-bold text-primary">
             {(profile?.full_name ?? "?").slice(0, 1)}

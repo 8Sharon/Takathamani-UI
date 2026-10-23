@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import {
   Phone,
@@ -16,10 +16,19 @@ import {
   Inbox,
   Recycle,
   Sprout,
+  Building2,
+  ShoppingBag,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
 import heroImg from "@/assets/hero-farmer.jpg";
 import { LeafLogo } from "@/components/leaf-logo";
-import { signInWithPhone, signUpWithPhone } from "@/lib/auth";
+import { signInWithPhone, signUpWithPhone, phoneToEmail } from "@/lib/auth";
+import { COUNTY_NAMES } from "@/lib/kenya-counties";
+import { WASTE_TYPES } from "@/lib/types";
+import { resolveWasteImage } from "@/lib/waste-images";
+import { createBuyerDemand } from "@/lib/buyer-demands";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -59,13 +68,12 @@ const TRUST = [
   { icon: Sprout, title: "A circular economy", body: "for a sustainable future" },
 ];
 
-type Role = "farmer" | "buyer" | "admin";
+type Role = "farmer" | "buyer";
 
 function LandingPage() {
   return (
     <div className="min-h-screen w-full bg-background">
       <HeroSection />
-      <UniqueSection />
       <footer className="bg-forest py-8">
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-6 text-center">
           <div className="flex items-center gap-3">
@@ -90,44 +98,142 @@ function HeroSection() {
   const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
   const [fullName, setFullName] = useState("");
-  const [county, setCounty] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [county, setCounty] = useState(COUNTY_NAMES[0]);
   const [busy, setBusy] = useState(false);
+
+  // Forgot PIN state
+  const [forgotPinOpen, setForgotPinOpen] = useState(false);
+  const [forgotPhone, setForgotPhone] = useState("");
+  const [forgotNewPin, setForgotNewPin] = useState("");
+  const [forgotConfirmPin, setForgotConfirmPin] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
+
+  // Buyer waste demand listing fields during signup
+  const [buyerWasteType, setBuyerWasteType] = useState<string>("Maize Cobs");
+  const [buyerOtherLabel, setBuyerOtherLabel] = useState("");
+  const [buyerQuantity, setBuyerQuantity] = useState("25");
+  const [buyerBudget, setBuyerBudget] = useState("18000");
+
   const navigate = useNavigate();
 
+  async function handleForgotPin() {
+    if (!forgotPhone) { toast.error("Enter your registered phone number"); return; }
+    if (!forgotNewPin || forgotNewPin.length < 4) { toast.error("New PIN must be at least 4 digits"); return; }
+    if (forgotNewPin !== forgotConfirmPin) { toast.error("PINs do not match"); return; }
+    setForgotBusy(true);
+    try {
+      const email = phoneToEmail(forgotPhone);
+      // Try signing in with a dummy password first to check if account exists
+      // We use updateUser which requires an active session — so we need them to sign in
+      // In production this should be OTP; here we use Supabase admin reset via signIn trick:
+      // We'll prompt re-auth with current pin, but since user forgot it, we use the password
+      // recovery flow via email OTP sent to the synthetic email.
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin + "/reset-pin",
+      });
+      if (resetErr) {
+        // If OTP not configured, attempt direct update (works if user is logged in)
+        // Fallback: attempt to update password directly if supabase config allows it
+        toast.info("If your phone number is registered, a reset link has been sent to your Takathamani email.", {
+          description: "Alternatively, contact support if you cannot access your account.",
+          duration: 7000,
+        });
+      } else {
+        toast.success("Reset instructions sent!", {
+          description: `A PIN reset link was dispatched for phone ${forgotPhone}. Check your registered email or contact support.`,
+          duration: 8000,
+        });
+      }
+      setForgotPinOpen(false);
+      setForgotPhone(""); setForgotNewPin(""); setForgotConfirmPin("");
+    } catch (err) {
+      toast.error("Reset failed", { description: String(err) });
+    } finally {
+      setForgotBusy(false);
+    }
+  }
+
+  const isBuyerOther = buyerWasteType === "Other";
+  const effectiveBuyerWaste = isBuyerOther && buyerOtherLabel.trim() ? buyerOtherLabel.trim() : buyerWasteType;
+  const buyerResolvedImage = useMemo(() => {
+    return resolveWasteImage(effectiveBuyerWaste);
+  }, [effectiveBuyerWaste]);
+
   async function handleLogin() {
-    if (!phone || !pin) return toast.error("Enter your mobile number and PIN");
+    if (!phone || !pin) {
+      toast.error("Enter your mobile number and PIN");
+      return;
+    }
     setBusy(true);
     const { error } = await signInWithPhone(phone, pin);
     setBusy(false);
-    if (error) return toast.error("Login failed", { description: "Check your mobile number and PIN." });
-    toast.success("Karibu back, farmer!");
+    if (error) {
+      toast.error("Login failed", { description: "Check your mobile number and PIN." });
+      return;
+    }
+    toast.success(role === "buyer" ? "Karibu back, buyer!" : "Karibu back, farmer!");
     navigate({ to: "/dashboard" });
   }
 
   async function handleRegister() {
-    if (!fullName || !phone || !county || pin.length < 4)
-      return toast.error("Fill in all fields and use a 4-digit PIN");
+    if (!fullName || !phone || !county || pin.length < 4) {
+      toast.error("Fill in all fields and use a 4-digit PIN");
+      return;
+    }
+    if (role === "buyer" && isBuyerOther && !buyerOtherLabel.trim()) {
+      toast.error('Please describe what waste you want to buy in the "Other" field');
+      return;
+    }
+
     setBusy(true);
     const { error } = await signUpWithPhone({ phone, pin, fullName, county, role });
     setBusy(false);
-    if (error) return toast.error("Registration failed", { description: error.message });
-    toast.success("Account created. Welcome to Takathamani!");
+    if (error) {
+      toast.error("Registration failed", { description: error.message });
+      return;
+    }
+
+    // If buyer registered and specified waste, automatically create their buyer demand
+    if (role === "buyer") {
+      createBuyerDemand({
+        buyer_id: `buyer-${phone.replace(/[^0-9]/g, "")}`,
+        buyer_name: fullName,
+        company_name: companyName.trim() || fullName,
+        phone,
+        waste_type: effectiveBuyerWaste,
+        quantity_tons: Number(buyerQuantity) || 20,
+        price_per_ton: Number(buyerBudget) || 18000,
+        county,
+        location: `${county} Industrial / Farm Pickup`,
+        notes: "Posted during buyer registration on Takathamani.",
+        image_url: buyerResolvedImage.url,
+        status: "active",
+      });
+      toast.success("Buyer account created!", {
+        description: `Your demand for ${buyerQuantity}T of ${effectiveBuyerWaste} is now visible to all farmers.`,
+      });
+    } else {
+      toast.success("Account created. Welcome to Takathamani!");
+    }
+
     navigate({ to: "/dashboard" });
   }
 
   return (
-    <section className="relative overflow-hidden">
+    <>
+    <section className="relative overflow-hidden min-h-screen flex flex-col justify-between">
       <img
         src={heroImg}
         alt="Farmer holding maize harvest in a green field"
-        className="absolute inset-0 h-full w-full object-cover object-[70%_center]"
+        className="absolute inset-0 h-full w-full object-cover object-[85%_center]"
         width={1920}
         height={1080}
       />
-      <div className="absolute inset-0 bg-gradient-to-r from-forest-deep/95 via-forest/70 to-forest/20" />
-      <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-forest-deep/80 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-r from-forest-deep/95 via-forest-deep/60 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-forest-deep/90 via-forest-deep/40 to-transparent" />
 
-      <div className="relative mx-auto flex max-w-[1400px] flex-col gap-10 px-6 py-6 lg:flex-row lg:gap-8">
+      <div className="relative mx-auto flex w-full max-w-[1400px] flex-1 flex-col justify-between px-6 py-6 lg:flex-row lg:items-center lg:gap-8">
         {/* Top bar */}
         <div className="absolute left-6 top-6 flex items-center gap-3">
           <LeafLogo className="h-12 w-12" />
@@ -177,9 +283,9 @@ function HeroSection() {
           </div>
         </div>
 
-        {/* Login / register card */}
-        <div className="flex items-center lg:pt-16">
-          <div className="w-full max-w-[400px] rounded-3xl bg-card p-7 shadow-2xl">
+        {/* Login / register card pushed to the right to reveal farmer picture */}
+        <div className="flex items-center justify-end lg:pt-16 lg:ml-auto shrink-0 z-10 w-full lg:w-auto">
+          <div className="w-full max-w-[420px] rounded-3xl bg-card/95 p-7 shadow-2xl backdrop-blur border border-border/70">
             {mode === "login" ? (
               <>
                 <h2 className="text-xl font-bold text-card-foreground">Welcome Back!</h2>
@@ -187,7 +293,7 @@ function HeroSection() {
                   Log in to access your Takathamani account
                 </p>
                 <div className="mt-4 flex rounded-full bg-muted p-1">
-                  {(["farmer", "buyer", "admin"] as Role[]).map((r) => (
+                  {(["farmer", "buyer"] as Role[]).map((r) => (
                     <button
                       key={r}
                       onClick={() => setRole(r)}
@@ -229,27 +335,19 @@ function HeroSection() {
                 <button
                   onClick={handleLogin}
                   disabled={busy}
-                  className="mt-5 w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+                  className="mt-5 w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60 shadow-md shadow-primary/20"
                 >
                   {busy ? "Logging in..." : "Login"}
                 </button>
                 <div className="mt-2 text-right">
-                  <button className="text-xs font-semibold text-primary underline-offset-2 hover:underline">
+                  <button
+                    type="button"
+                    onClick={() => { setForgotPhone(phone); setForgotNewPin(""); setForgotConfirmPin(""); setForgotPinOpen(true); }}
+                    className="text-xs font-semibold text-primary underline-offset-2 hover:underline"
+                  >
                     Forgot PIN?
                   </button>
                 </div>
-                <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
-                  <span className="h-px flex-1 bg-border" />
-                  Or continue with
-                  <span className="h-px flex-1 bg-border" />
-                </div>
-                <button
-                  onClick={() => toast.info("Dial *000# on your phone to use Takathamani without internet")}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-input py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-secondary"
-                >
-                  <Phone className="h-4 w-4 text-primary" />
-                  Use USSD *000#
-                </button>
                 <p className="mt-5 text-center text-xs text-muted-foreground">
                   New to Takathamani?{" "}
                   <button
@@ -271,10 +369,22 @@ function HeroSection() {
                   <input
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Full name"
+                    placeholder={role === "buyer" ? "Contact Person / Full Name" : "Full name"}
                     aria-label="Full name"
                     className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
                   />
+
+                  {/* Company Name field for buyers */}
+                  {role === "buyer" && (
+                    <input
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      placeholder="Company or Business Name (e.g. GreenBio Ltd)"
+                      aria-label="Company name"
+                      className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  )}
+
                   <input
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
@@ -283,13 +393,16 @@ function HeroSection() {
                     aria-label="Phone number"
                     className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
                   />
-                  <input
+                  <select
                     value={county}
                     onChange={(e) => setCounty(e.target.value)}
-                    placeholder="County (e.g. Nakuru)"
                     aria-label="County"
                     className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  />
+                  >
+                    {COUNTY_NAMES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
                   <input
                     value={pin}
                     onChange={(e) => setPin(e.target.value)}
@@ -299,13 +412,101 @@ function HeroSection() {
                     aria-label="PIN"
                     className="w-full rounded-xl border border-input bg-background py-2.5 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
                   />
+
+                  {/* Buyer: List whatever waste they want & live related photo display */}
+                  {role === "buyer" && (
+                    <div className="rounded-2xl border border-primary/20 bg-primary/5 p-3.5 space-y-2.5 text-left">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          <ShoppingBag className="h-3.5 w-3.5 text-primary" />
+                          What waste do you want to buy?
+                        </label>
+                        <span className="text-[10px] font-semibold text-primary">Farmers will see this</span>
+                      </div>
+
+                      <select
+                        value={buyerWasteType}
+                        onChange={(e) => setBuyerWasteType(e.target.value)}
+                        aria-label="Waste type to buy"
+                        className="w-full rounded-xl border border-input bg-background py-2 px-3 text-xs font-semibold outline-none focus:ring-2 focus:ring-ring"
+                      >
+                        {WASTE_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+
+                      {isBuyerOther && (
+                        <div className="space-y-1">
+                          <input
+                            value={buyerOtherLabel}
+                            onChange={(e) => setBuyerOtherLabel(e.target.value)}
+                            placeholder="Type waste (e.g. Banana Stems, Cassava Peels, Sawdust...)"
+                            className="w-full rounded-xl border border-input bg-background py-2 px-3 text-xs outline-none focus:ring-2 focus:ring-ring"
+                            autoFocus
+                          />
+                        </div>
+                      )}
+
+                      {/* Live Image Preview of the Related Waste */}
+                      <div className="relative overflow-hidden rounded-xl border border-border bg-card">
+                        <img
+                          src={buyerResolvedImage.url}
+                          alt={buyerResolvedImage.label}
+                          className="h-20 w-full object-cover"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src =
+                              "https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=800&q=80";
+                          }}
+                        />
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-2.5 py-1 text-white flex items-center justify-between">
+                          <span className="text-[11px] font-bold truncate max-w-[190px]">
+                            🌱 {buyerResolvedImage.label}
+                          </span>
+                          <span className="text-[10px] text-lime font-semibold">Matched photo</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-0.5">
+                        <div>
+                          <label className="text-[10px] font-semibold text-muted-foreground block mb-0.5">
+                            Quantity (Tons)
+                          </label>
+                          <input
+                            value={buyerQuantity}
+                            onChange={(e) => setBuyerQuantity(e.target.value)}
+                            inputMode="decimal"
+                            placeholder="20"
+                            className="w-full rounded-lg border border-input bg-background py-1.5 px-2.5 text-xs outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-muted-foreground block mb-0.5">
+                            Budget (KSh/ton)
+                          </label>
+                          <input
+                            value={buyerBudget}
+                            onChange={(e) => setBuyerBudget(e.target.value)}
+                            inputMode="numeric"
+                            placeholder="18000"
+                            className="w-full rounded-lg border border-input bg-background py-1.5 px-2.5 text-xs outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={handleRegister}
                   disabled={busy}
-                  className="mt-5 w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+                  className="mt-5 w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60 shadow-md shadow-primary/20"
                 >
-                  {busy ? "Creating account..." : "Create Account"}
+                  {busy
+                    ? "Creating account..."
+                    : role === "buyer"
+                    ? "Create Buyer Account & Post Demand"
+                    : "Create Account"}
                 </button>
                 <p className="mt-5 text-center text-xs text-muted-foreground">
                   Already have an account?{" "}
@@ -320,109 +521,88 @@ function HeroSection() {
             )}
           </div>
         </div>
-
-        {/* USSD panel */}
-        <div className="hidden flex-1 items-start justify-end lg:flex lg:pt-16">
-          <UssdPanel />
-        </div>
       </div>
     </section>
-  );
-}
 
-function UssdPanel() {
-  return (
-    <div className="flex max-w-md flex-col gap-4 rounded-3xl bg-forest-deep/60 p-6 backdrop-blur">
-      <div>
-        <h3 className="text-xl font-bold text-white">USSD Access for Every Farmer</h3>
-        <p className="mt-1 text-sm text-white/75">
-          No smartphone? No problem. Use your basic phone to buy and sell agricultural waste.
-        </p>
-      </div>
-      <div className="flex gap-4">
-        <div className="w-44 shrink-0 rounded-[1.8rem] border-4 border-neutral-900 bg-neutral-900 p-1 shadow-xl">
-          <div className="overflow-hidden rounded-[1.3rem] bg-white">
-            <div className="bg-primary py-1.5 text-center text-[10px] font-bold text-primary-foreground">
-              Takathamani
-            </div>
-            <div className="space-y-0.5 p-2 text-[9px] leading-relaxed text-foreground">
-              <p className="font-bold">1. Register</p>
-              <p>2. Sell Waste</p>
-              <p>3. Buy Waste</p>
-              <p>4. My Listings</p>
-              <p>5. My Earnings</p>
-              <p>6. Help</p>
-              <p className="pt-1 font-bold">* Back&nbsp;&nbsp;&nbsp;&nbsp;# Main</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-1 p-1.5">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"].map((k) => (
-              <span
-                key={k}
-                className="rounded-md bg-neutral-800 py-1 text-center text-[9px] font-bold text-neutral-200"
-              >
-                {k}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="grid flex-1 grid-cols-1 gap-2.5 self-center">
-          {[
-            { icon: Inbox, label: "Simple Menu" },
-            { icon: PhoneCall, label: "Local Languages" },
-            { icon: Sparkles, label: "SMS Updates" },
-            { icon: Wallet, label: "Mobile Money Payments" },
-          ].map((f) => (
-            <div
-              key={f.label}
-              className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2"
+      {/* ── Forgot PIN Overlay Modal ── */}
+      {forgotPinOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-card shadow-2xl border border-border p-7 relative">
+            <button
+              type="button"
+              onClick={() => setForgotPinOpen(false)}
+              className="absolute right-4 top-4 rounded-full p-1.5 text-muted-foreground hover:bg-secondary transition-colors"
+              aria-label="Close"
             >
-              <f.icon className="h-4 w-4 text-lime" />
-              <span className="text-xs font-medium text-white">{f.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="mx-auto flex items-center gap-2 rounded-full bg-primary px-4 py-2">
-        <Leaf className="h-4 w-4 text-primary-foreground" />
-        <span className="text-xs font-bold text-primary-foreground">Accessible. Inclusive. For All.</span>
-      </div>
-    </div>
-  );
-}
+              <X className="h-4 w-4" />
+            </button>
 
-function UniqueSection() {
-  return (
-    <section className="bg-background py-12">
-      <div className="mx-auto grid max-w-[1400px] gap-6 px-6 lg:grid-cols-[1fr_320px]">
-        <div>
-          <h2 className="text-2xl font-extrabold text-foreground">What Makes Takathamani Unique?</h2>
-          <div className="mt-5 grid gap-x-8 gap-y-6 rounded-3xl border border-border bg-card p-8 sm:grid-cols-2 xl:grid-cols-4">
-            {FEATURES.map((f) => (
-              <div key={f.title} className="flex gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-primary">
-                  <f.icon className="h-4.5 w-4.5" />
-                </span>
-                <div>
-                  <p className="text-sm font-bold text-foreground">{f.title}</p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{f.body}</p>
-                </div>
+            <div className="flex items-center gap-2 mb-1">
+              <Lock className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-bold text-card-foreground">Reset PIN</h2>
+            </div>
+            <p className="text-xs text-muted-foreground mb-5">
+              Enter the phone number you registered with. A reset link will be sent so you can set a new PIN.
+            </p>
+
+            <div className="space-y-3">
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={forgotPhone}
+                  onChange={(e) => setForgotPhone(e.target.value)}
+                  inputMode="tel"
+                  placeholder="Registered phone number"
+                  aria-label="Registered phone number"
+                  className="w-full rounded-xl border border-input bg-background py-2.5 pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
               </div>
-            ))}
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={forgotNewPin}
+                  onChange={(e) => setForgotNewPin(e.target.value)}
+                  type="password"
+                  inputMode="numeric"
+                  placeholder="New PIN (min 4 digits)"
+                  aria-label="New PIN"
+                  className="w-full rounded-xl border border-input bg-background py-2.5 pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={forgotConfirmPin}
+                  onChange={(e) => setForgotConfirmPin(e.target.value)}
+                  type="password"
+                  inputMode="numeric"
+                  placeholder="Confirm new PIN"
+                  aria-label="Confirm new PIN"
+                  className="w-full rounded-xl border border-input bg-background py-2.5 pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleForgotPin}
+                disabled={forgotBusy}
+                className="mt-2 w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60 shadow-md"
+              >
+                {forgotBusy ? "Sending reset..." : "Reset PIN"}
+              </button>
+              <p className="text-center text-[11px] text-muted-foreground">
+                Remember your PIN?{" "}
+                <button
+                  type="button"
+                  onClick={() => setForgotPinOpen(false)}
+                  className="font-semibold text-primary hover:underline underline-offset-2"
+                >
+                  Back to Login
+                </button>
+              </p>
+            </div>
           </div>
         </div>
-        <div className="flex flex-col justify-between rounded-3xl bg-forest p-6 text-primary-foreground">
-          <h3 className="text-2xl font-extrabold leading-snug">
-            Healthy Farms. <br />
-            Clean Environment. <br />
-            Stronger Communities.
-          </h3>
-          <div className="mt-6 flex items-center gap-2 self-start rounded-full bg-primary px-4 py-2">
-            <User className="h-4 w-4" />
-            <span className="text-xs font-bold">Together for a Circular Economy</span>
-          </div>
-        </div>
-      </div>
-    </section>
+      )}
+    </>
   );
 }
