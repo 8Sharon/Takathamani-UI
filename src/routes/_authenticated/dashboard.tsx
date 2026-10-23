@@ -79,16 +79,41 @@ function WeatherIcon({ code, className }: { code: number; className?: string }) 
 
 function DashboardPage() {
   const getDash = useServerFn(getDashboard);
-  const { data, isLoading } = useQuery({ queryKey: ["dashboard"], queryFn: () => getDash() });
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ["dashboard"],
+    queryFn: () => getDash(),
+  });
   const buyerDemands = useBuyerDemands();
   const geo = useGeolocation();
   const weather = useWeather(geo.coords);
+  const isBuyer = data?.role === "buyer";
+
+  // Hooks must run before any early return — otherwise the hook order changes
+  // between the loading and loaded renders and React crashes the route.
+  const { messages: roleMsgs, unreadCount } = useRoleMessages(isBuyer ? "buyer" : "farmer");
+
+  if (isError) {
+    console.error("Dashboard failed to load:", error);
+    return (
+      <div className="py-20 text-center">
+        <p className="text-sm font-semibold text-foreground">We couldn't load your dashboard.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Something went wrong while fetching your account data. Please try again.
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="mt-4 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return <p className="py-20 text-center text-sm text-muted-foreground">Loading your dashboard...</p>;
   }
 
-  const isBuyer = data.role === "buyer";
   const firstName = data.profile.full_name.split(" ")[0] || "User";
   const earnings = data.transactions.reduce((s, t) => s + t.amount, 0);
   const tons = data.transactions.reduce((s, t) => s + t.tons, 0);
@@ -138,9 +163,6 @@ function DashboardPage() {
     myDemands.some((d) => wasteTypesMatch(d.waste_type, l.waste_type))
   );
   const matchedTonsAvailable = matchedFarmerListings.reduce((s, l) => s + (l.quantity_tons ?? 0), 0);
-
-  // Live messaging for this role
-  const { messages: roleMsgs, unreadCount } = useRoleMessages(isBuyer ? "buyer" : "farmer");
 
   // Account-specific recent activities (including messaging, demands/listings and deals)
   const recentActivities = isBuyer
